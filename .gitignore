@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# generated tracklists / scratch audio
+*.tracklist.json
+*.tracklist.md
+*.wav
+*.mp3
+*.m4a
+*.opus
