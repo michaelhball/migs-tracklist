@@ -6,6 +6,7 @@ build/
 dist/
 
 # generated tracklists / scratch audio
+tracklists/
 *.tracklist.json
 *.tracklist.md
 *.wav
