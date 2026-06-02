@@ -81,18 +81,34 @@ the console. Progress (one line per window) goes to stderr.
 A 60-min mix at `--hop 30` is ~120 windows ≈ ~10 min at the default rate (the rate
 limit, not the audio, is the bottleneck). `--grid` multiplies requests on misses.
 
-### Filling Shazam's gaps with AudD
+### Filling Shazam's gaps with AudD (optional)
 
 Some tracks just aren't in Shazam's catalog (different pressings/versions, obscure
 artists) — no amount of pitch/tempo correction recovers them. `--audd` runs
 [AudD](https://audd.io) (a different catalog) **only on the gaps Shazam left**,
-probing a few short clips per unidentified stretch, so it stays cheap (AudD's free
-tier is 300 requests). AudD-found tracks are kept even on a single hit and tagged
-`via AudD` in the output. Provide the token via a gitignored `.env`
-(`AUDD_API_TOKEN=...`) or the environment.
+probing a few short clips per unidentified stretch, so it stays cheap. AudD-found
+tracks are kept even on a single hit and tagged `via AudD` in the output.
+
+**Getting a token:** sign up at <https://dashboard.audd.io/> (free tier: 300
+requests, no card needed). Put it in a gitignored `.env` at the project root:
+
+```
+AUDD_API_TOKEN=your_token_here
+```
+
+(or export `AUDD_API_TOKEN`, or pass `--audd-token ...`). Then:
 
 ```bash
 uv run migshazam "<url>" --grid --audd
+```
+
+**It's optional and degrades gracefully.** migshazam runs Shazam-only unless you
+pass `--audd`. If the token is missing/invalid or you run out of AudD requests, it
+prints a warning and finishes with the Shazam results — the run never fails:
+
+```
+WARNING: AudD fallback unavailable (...the provided api_token is incorrect...);
+continuing with Shazam results only.
 ```
 
 ## How it's structured
