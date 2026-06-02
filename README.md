@@ -76,6 +76,7 @@ Outputs `<name>.tracklist.json` and `<name>.tracklist.md` (override the prefix w
 | `--min-matches` | `2` | drop songs seen in fewer than N windows (single hits are usually wrong) |
 | `--audd` | off | fall back to AudD on unidentified gaps (needs `AUDD_API_TOKEN`) |
 | `--audd-gap-min` | `60` | only probe AudD on gaps at least this many seconds long |
+| `--audd-clip-every` | `45` | AudD probe spacing within a gap (seconds); lower catches more, costs more |
 
 A 60-min mix at `--hop 30` is ~120 windows ≈ ~10 min at the default rate (the rate
 limit, not the audio, is the bottleneck). `--grid` multiplies requests on misses.
@@ -85,8 +86,9 @@ limit, not the audio, is the bottleneck). `--grid` multiplies requests on misses
 Some tracks just aren't in Shazam's catalog (different pressings/versions, obscure
 artists) — no amount of pitch/tempo correction recovers them. `--audd` runs
 [AudD](https://audd.io) (a different catalog) **only on the gaps Shazam left**,
-probing a few short clips per unidentified stretch, so it stays cheap. AudD-found
-tracks are kept even on a single hit and tagged `via AudD` in the output.
+probing one short clip roughly every `--audd-clip-every` seconds (default 45) so a
+short track inside a long gap isn't stepped over. AudD-found tracks are kept even
+on a single hit and tagged `via AudD` in the output.
 
 **Getting a token:** sign up at <https://dashboard.audd.io/> (free tier: 300
 requests, no card needed). Put it in a gitignored `.env` at the project root:
