@@ -75,9 +75,25 @@ the console. Progress (one line per window) goes to stderr.
 | `--grid-steps` | `0.94,0.97,1.03,1.06` | speed factors for `--grid` |
 | `--grid-min-rms` | `0.02` | skip the grid on near-silent windows (`0` disables) |
 | `--min-matches` | `2` | drop songs seen in fewer than N windows (single hits are usually wrong) |
+| `--audd` | off | fall back to AudD on unidentified gaps (needs `AUDD_API_TOKEN`) |
+| `--audd-gap-min` | `60` | only probe AudD on gaps at least this many seconds long |
 
 A 60-min mix at `--hop 30` is ~120 windows ≈ ~10 min at the default rate (the rate
 limit, not the audio, is the bottleneck). `--grid` multiplies requests on misses.
+
+### Filling Shazam's gaps with AudD
+
+Some tracks just aren't in Shazam's catalog (different pressings/versions, obscure
+artists) — no amount of pitch/tempo correction recovers them. `--audd` runs
+[AudD](https://audd.io) (a different catalog) **only on the gaps Shazam left**,
+probing a few short clips per unidentified stretch, so it stays cheap (AudD's free
+tier is 300 requests). AudD-found tracks are kept even on a single hit and tagged
+`via AudD` in the output. Provide the token via a gitignored `.env`
+(`AUDD_API_TOKEN=...`) or the environment.
+
+```bash
+uv run migshazam "<url>" --grid --audd
+```
 
 ## How it's structured
 
@@ -85,14 +101,16 @@ limit, not the audio, is the bottleneck). `--grid` multiplies requests on misses
 ingest.py     yt-dlp download (URL -> local file)
 audioio.py    ffmpeg: probe duration, extract mono windows (+ varispeed)
 recognize.py  ShazamIO wrapper: throttle + retry/backoff + parse
-scan.py       slide window across the mix, grid-search on misses
+scan.py       slide window across the mix, grid-search on misses; find_gaps()
 cluster.py    group detections into distinct songs (by Shazam track key)
+audd.py       AudD fallback backend for unidentified gaps
 output.py     console / JSON / Markdown
 cli.py        glue
 ```
 
-Recognition is deliberately behind a small interface (`Recognizer`) so a paid
-backend (AudD, ACRCloud) could be slotted in later if catalog coverage matters.
+Shazam (free, primary) and AudD (paid catalog, gap fallback) sit behind the same
+detection model, so additional backends (e.g. ACRCloud) could be slotted in the
+same way if catalog coverage demands it.
 
 ## Development
 
