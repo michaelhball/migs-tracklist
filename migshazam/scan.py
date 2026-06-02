@@ -33,6 +33,18 @@ def find_gaps(detections: list[Detection], duration: float, min_gap: float = 60.
     return gaps
 
 
+def gap_probe_offsets(start: float, end: float, every: float = 45.0, cap: int = 25) -> list[float]:
+    """Evenly spaced offsets to probe within a gap, ~one per `every` seconds.
+
+    Sparse sampling steps over short tracks (an 8-min gap at 3 probes misses a
+    track playing for only a minute), so we sample finely; `cap` bounds the
+    request count on very long gaps.
+    """
+    span = end - start
+    n = max(2, min(cap, round(span / every)))
+    return [start + span * (i + 1) / (n + 1) for i in range(n)]
+
+
 def _skew(d: Detection) -> float:
     """How far Shazam had to stretch to match (smaller = cleaner match)."""
     return abs(d.frequency_skew or 0.0) + abs(d.time_skew or 0.0)

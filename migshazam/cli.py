@@ -13,7 +13,7 @@ from .cluster import cluster_songs
 from .ingest import download_audio, is_url
 from .output import console, write_outputs
 from .recognize import Recognizer
-from .scan import _fmt, find_gaps, scan_mix
+from .scan import _fmt, find_gaps, gap_probe_offsets, scan_mix
 
 DEFAULT_GRID = "0.94,0.97,1.03,1.06"
 
@@ -62,6 +62,9 @@ def _build_parser() -> argparse.ArgumentParser:
                         "in env or a .env file); catches tracks not in Shazam's catalog")
     p.add_argument("--audd-gap-min", type=float, default=60.0,
                    help="only probe AudD on gaps at least this many seconds long (default 60)")
+    p.add_argument("--audd-clip-every", type=float, default=45.0,
+                   help="AudD probe spacing within a gap, in seconds (default 45; "
+                        "lower catches more but costs more requests)")
     p.add_argument("--audd-token", default=None,
                    help="AudD API token (overrides env/.env)")
     p.add_argument("--out", default=None,
@@ -128,10 +131,7 @@ async def _run(args) -> int:
                   file=sys.stderr)
             try:
                 for gs, ge in gaps:
-                    glen = ge - gs
-                    n = max(2, min(6, round(glen / 150)))
-                    for i in range(n):
-                        off = gs + glen * (i + 1) / (n + 1)
+                    for off in gap_probe_offsets(gs, ge, args.audd_clip_every):
                         det = audd.recognize_clip(audio_path, off)
                         label = f"{det.artist} – {det.title}" if det else "—"
                         print(f"  [AudD] {_fmt(off)}  {label}", file=sys.stderr)
