@@ -8,7 +8,7 @@ import os
 import sys
 import tempfile
 
-from .audd import AuddRecognizer, load_token
+from .audd import AuddError, AuddRecognizer, load_token
 from .cluster import cluster_songs
 from .ingest import download_audio, is_url
 from .output import console, write_outputs
@@ -117,7 +117,7 @@ async def _run(args) -> int:
         token = load_token(args.audd_token)
         if not token:
             print("WARNING: --audd set but no AUDD_API_TOKEN found (env or .env); "
-                  "skipping fallback", file=sys.stderr)
+                  "continuing with Shazam only.", file=sys.stderr)
         else:
             audd = AuddRecognizer(token)
             scan_start = max(0.0, args.start)
@@ -126,16 +126,21 @@ async def _run(args) -> int:
                     if e > scan_start]
             print(f"AudD fallback: probing {len(gaps)} gap(s) >= {args.audd_gap_min:g}s ...",
                   file=sys.stderr)
-            for gs, ge in gaps:
-                glen = ge - gs
-                n = max(2, min(6, round(glen / 150)))
-                for i in range(n):
-                    off = gs + glen * (i + 1) / (n + 1)
-                    det = audd.recognize_clip(audio_path, off)
-                    label = f"{det.artist} – {det.title}" if det else "—"
-                    print(f"  [AudD] {_fmt(off)}  {label}", file=sys.stderr)
-                    if det:
-                        detections.append(det)
+            try:
+                for gs, ge in gaps:
+                    glen = ge - gs
+                    n = max(2, min(6, round(glen / 150)))
+                    for i in range(n):
+                        off = gs + glen * (i + 1) / (n + 1)
+                        det = audd.recognize_clip(audio_path, off)
+                        label = f"{det.artist} – {det.title}" if det else "—"
+                        print(f"  [AudD] {_fmt(off)}  {label}", file=sys.stderr)
+                        if det:
+                            detections.append(det)
+            except AuddError as exc:
+                # Token expired / quota exhausted / network: keep going Shazam-only.
+                print(f"WARNING: AudD fallback unavailable ({exc}); "
+                      f"continuing with Shazam results only.", file=sys.stderr)
             print(f"AudD used {audd.requests} request(s)", file=sys.stderr)
 
     if cleanup_audio:
