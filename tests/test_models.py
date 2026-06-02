@@ -32,3 +32,18 @@ def test_label():
     s = Song(track_key="k", title="Tramp", artist="Otis Redding")
     assert s.label() == "Otis Redding – Tramp"
     assert Song(track_key="k", title="", artist="").label() == "? – ?"
+
+
+def test_source_and_via_audd():
+    mixed = Song(track_key="k", title="T", artist="A")
+    mixed.detections += [Detection(0, "k", "T", "A"),
+                         Detection(30, "k", "T", "A", source="audd")]
+    assert mixed.via_audd is True
+    assert mixed.source == "mixed"
+
+    pure = Song(track_key="z", title="T", artist="A")
+    pure.detections.append(Detection(0, "z", "T", "A", source="audd"))
+    assert pure.source == "audd"
+
+    shz = _song(n=2)
+    assert shz.via_audd is False and shz.source == "shazam"

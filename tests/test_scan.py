@@ -1,7 +1,7 @@
 import pytest
 
 from migshazam.models import Detection
-from migshazam.scan import _arbitrate, _fmt, _skew
+from migshazam.scan import _arbitrate, _fmt, _skew, find_gaps
 
 
 def D(key, speed, fs=0.0, ts=0.0):
@@ -41,3 +41,19 @@ def test_skew_handles_missing_values():
 @pytest.mark.parametrize("secs,expected", [(0, "0:00"), (75, "1:15"), (3661, "1:01:01")])
 def test_fmt(secs, expected):
     assert _fmt(secs) == expected
+
+
+def test_find_gaps_between_songs_and_tail():
+    dets = [Detection(t, "a", "T", "A") for t in (0, 30, 60)] + \
+           [Detection(t, "b", "T", "A") for t in (200, 230, 260)]
+    gaps = find_gaps(dets, duration=400, min_gap=60)
+    assert (60.0, 200.0) in gaps                      # gap between the two songs
+    assert any(s == 260.0 and e == 400.0 for s, e in gaps)  # tail after last
+    # no spurious gap inside a song (windows 30s apart < min_gap)
+    assert all(not (0 <= s < 60) for s, e in gaps)
+
+
+def test_find_gaps_lead_in():
+    dets = [Detection(t, "a", "T", "A") for t in (120, 150)]
+    gaps = find_gaps(dets, duration=200, min_gap=60)
+    assert (0.0, 120.0) in gaps   # silence/unidentified before the first hit

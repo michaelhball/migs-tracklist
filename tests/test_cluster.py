@@ -31,6 +31,16 @@ def test_track_key_takes_priority_over_title():
     assert len(songs) == 1
 
 
+def test_audd_gap_fill_survives_min_matches():
+    # A single Shazam hit is dropped, but a single AudD gap-fill is kept.
+    dets = [Detection(0, "shz", "T", "A")]
+    audd = [Detection(300, "audd:x|y", "Y", "X", source="audd")]
+    songs = cluster_songs(dets + audd, min_matches=2)
+    keys = [s.track_key for s in songs]
+    assert "shz" not in keys
+    assert "audd:x|y" in keys
+
+
 def test_norm_strips_features_and_parentheticals():
     assert _norm("Take On Me (Live)") == "take on me"
     assert _norm("Song feat. Someone") == "song"
