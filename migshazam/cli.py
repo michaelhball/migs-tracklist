@@ -8,11 +8,12 @@ import os
 import sys
 import tempfile
 
+from .audd import AuddRecognizer, load_token
 from .cluster import cluster_songs
 from .ingest import download_audio, is_url
 from .output import console, write_outputs
 from .recognize import Recognizer
-from .scan import scan_mix
+from .scan import _fmt, find_gaps, scan_mix
 
 DEFAULT_GRID = "0.94,0.97,1.03,1.06"
 
@@ -56,6 +57,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-matches", type=int, default=2,
                    help="drop songs with fewer than N window hits (default 2; "
                         "single low-confidence hits are usually wrong)")
+    p.add_argument("--audd", action="store_true",
+                   help="fall back to AudD on unidentified gaps (needs AUDD_API_TOKEN "
+                        "in env or a .env file); catches tracks not in Shazam's catalog")
+    p.add_argument("--audd-gap-min", type=float, default=60.0,
+                   help="only probe AudD on gaps at least this many seconds long (default 60)")
+    p.add_argument("--audd-token", default=None,
+                   help="AudD API token (overrides env/.env)")
     p.add_argument("--out", default=None,
                    help="output file prefix (default: derived from input)")
     p.add_argument("--keep-audio", action="store_true",
@@ -103,6 +111,32 @@ async def _run(args) -> int:
         start_s=args.start, end_s=args.end,
         grid_min_rms=args.grid_min_rms,
     )
+
+    # AudD fallback on unidentified gaps (needs the audio file, so before cleanup).
+    if args.audd:
+        token = load_token(args.audd_token)
+        if not token:
+            print("WARNING: --audd set but no AUDD_API_TOKEN found (env or .env); "
+                  "skipping fallback", file=sys.stderr)
+        else:
+            audd = AuddRecognizer(token)
+            scan_start = max(0.0, args.start)
+            scan_end = duration if args.end is None else min(args.end, duration)
+            gaps = [(s, e) for (s, e) in find_gaps(detections, scan_end, args.audd_gap_min)
+                    if e > scan_start]
+            print(f"AudD fallback: probing {len(gaps)} gap(s) >= {args.audd_gap_min:g}s ...",
+                  file=sys.stderr)
+            for gs, ge in gaps:
+                glen = ge - gs
+                n = max(2, min(6, round(glen / 150)))
+                for i in range(n):
+                    off = gs + glen * (i + 1) / (n + 1)
+                    det = audd.recognize_clip(audio_path, off)
+                    label = f"{det.artist} – {det.title}" if det else "—"
+                    print(f"  [AudD] {_fmt(off)}  {label}", file=sys.stderr)
+                    if det:
+                        detections.append(det)
+            print(f"AudD used {audd.requests} request(s)", file=sys.stderr)
 
     if cleanup_audio:
         try:

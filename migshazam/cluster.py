@@ -36,6 +36,8 @@ def cluster_songs(detections: list[Detection], min_matches: int = 1) -> list[Son
             songs[key] = song
         song.detections.append(d)
 
-    result = [s for s in songs.values() if s.count >= min_matches]
+    # Keep a song if Shazam saw it enough times, OR the AudD fallback found it
+    # (gap-fills are deliberately kept even on a single hit).
+    result = [s for s in songs.values() if s.count >= min_matches or s.via_audd]
     result.sort(key=lambda s: s.first_s)
     return result
