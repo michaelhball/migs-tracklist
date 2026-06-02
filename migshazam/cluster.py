@@ -25,6 +25,33 @@ def _identity(d: Detection) -> str:
     return f"ta:{_norm(d.title)}|{_norm(d.artist)}"
 
 
+# Consecutive hits of the same title within this many seconds are treated as
+# one track (a song rarely recurs that fast).
+_MERGE_GAP_S = 150.0
+
+
+def _merge_same_title(songs: list[Song]) -> list[Song]:
+    """Merge time-adjacent songs that share a normalized title.
+
+    Handles the same track surfacing under slightly different artist strings
+    (e.g. AudD returning "Charles" vs "Charlie" Mingus for "Cryin' Blues").
+    Detections are combined, so the merged hit count is the sum.
+    """
+    merged: list[Song] = []
+    for s in songs:
+        prev = merged[-1] if merged else None
+        if (
+            prev is not None
+            and _norm(s.title)
+            and _norm(prev.title) == _norm(s.title)
+            and s.first_s - prev.last_s <= _MERGE_GAP_S
+        ):
+            prev.detections.extend(s.detections)
+        else:
+            merged.append(s)
+    return merged
+
+
 def cluster_songs(detections: list[Detection], min_matches: int = 1) -> list[Song]:
     """Group detections into distinct Songs, sorted by first appearance."""
     songs: dict[str, Song] = {}
@@ -36,8 +63,10 @@ def cluster_songs(detections: list[Detection], min_matches: int = 1) -> list[Son
             songs[key] = song
         song.detections.append(d)
 
+    ordered = sorted(songs.values(), key=lambda s: s.first_s)
+    ordered = _merge_same_title(ordered)
+
     # Keep a song if Shazam saw it enough times, OR the AudD fallback found it
-    # (gap-fills are deliberately kept even on a single hit).
-    result = [s for s in songs.values() if s.count >= min_matches or s.via_audd]
-    result.sort(key=lambda s: s.first_s)
-    return result
+    # (gap-fills are deliberately kept even on a single hit). Merging happens
+    # first, so two single hits of one title combine to clear `min_matches`.
+    return [s for s in ordered if s.count >= min_matches or s.via_audd]
