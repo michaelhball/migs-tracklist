@@ -19,6 +19,14 @@ from .models import Detection
 ENDPOINT = "https://api.audd.io/"
 
 
+class AuddError(Exception):
+    """AudD couldn't be used (missing/invalid token, quota exhausted, network).
+
+    Raised so the caller can warn and gracefully fall back to Shazam-only
+    results rather than crashing or silently mistaking it for 'no match'.
+    """
+
+
 def load_token(explicit: str | None = None) -> str | None:
     """Resolve the AudD token: explicit arg > env var > project .env file."""
     if explicit:
@@ -39,6 +47,30 @@ def _clip(path: str, start_s: float, dur_s: float, sr: int = 44100) -> bytes:
     return subprocess.run(cmd, capture_output=True, check=True).stdout
 
 
+def _parse_response(resp: dict, start_s: float) -> Detection | None:
+    """Turn an AudD JSON response into a Detection.
+
+    Returns None for a genuine no-match; raises AuddError for an error status
+    (bad token / quota exhausted / etc.) so it isn't confused with 'no match'.
+    """
+    if resp.get("status") != "success":
+        err = resp.get("error") or {}
+        raise AuddError(err.get("error_message") or str(err) or "unknown AudD error")
+    res = resp.get("result")
+    if not res:
+        return None
+    artist = (res.get("artist") or "").strip()
+    title = (res.get("title") or "").strip()
+    return Detection(
+        time_s=start_s,
+        track_key=f"audd:{artist}|{title}".lower(),
+        title=title,
+        artist=artist,
+        url=res.get("song_link"),
+        source="audd",
+    )
+
+
 class AuddRecognizer:
     def __init__(self, token: str, clip_s: float = 18.0):
         self.token = token
@@ -46,7 +78,8 @@ class AuddRecognizer:
         self.requests = 0
 
     def recognize_clip(self, path: str, start_s: float) -> Detection | None:
-        """Identify a single clip via AudD; returns a Detection or None."""
+        """Identify a single clip via AudD. None = no match; raises AuddError if
+        AudD itself is unusable (token/quota/network)."""
         self.requests += 1
         try:
             resp = requests.post(
@@ -55,20 +88,6 @@ class AuddRecognizer:
                 files={"file": ("clip.wav", _clip(path, start_s, self.clip_s), "audio/wav")},
                 timeout=90,
             ).json()
-        except Exception:
-            return None
-        if resp.get("status") != "success":
-            return None
-        res = resp.get("result")
-        if not res:
-            return None
-        artist = (res.get("artist") or "").strip()
-        title = (res.get("title") or "").strip()
-        return Detection(
-            time_s=start_s,
-            track_key=f"audd:{artist}|{title}".lower(),
-            title=title,
-            artist=artist,
-            url=res.get("song_link"),
-            source="audd",
-        )
+        except Exception as exc:
+            raise AuddError(f"request failed: {exc}") from exc
+        return _parse_response(resp, start_s)
