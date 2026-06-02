@@ -15,6 +15,24 @@ def _fmt(seconds: float) -> str:
     return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:d}:{s:02d}"
 
 
+def find_gaps(detections: list[Detection], duration: float, min_gap: float = 60.0):
+    """Return (start, end) stretches with no detection longer than `min_gap`.
+
+    Includes the lead-in before the first hit and the tail after the last.
+    Used to target the AudD fallback only where Shazam found nothing.
+    """
+    times = sorted({round(d.time_s, 3) for d in detections})
+    gaps = []
+    prev = 0.0
+    for t in times:
+        if t - prev >= min_gap:
+            gaps.append((prev, t))
+        prev = max(prev, t)
+    if duration - prev >= min_gap:
+        gaps.append((prev, duration))
+    return gaps
+
+
 def _skew(d: Detection) -> float:
     """How far Shazam had to stretch to match (smaller = cleaner match)."""
     return abs(d.frequency_skew or 0.0) + abs(d.time_skew or 0.0)
