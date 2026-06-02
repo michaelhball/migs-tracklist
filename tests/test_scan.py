@@ -1,7 +1,7 @@
 import pytest
 
 from migshazam.models import Detection
-from migshazam.scan import _arbitrate, _fmt, _skew, find_gaps
+from migshazam.scan import _arbitrate, _fmt, _skew, find_gaps, gap_probe_offsets
 
 
 def D(key, speed, fs=0.0, ts=0.0):
@@ -57,3 +57,15 @@ def test_find_gaps_lead_in():
     dets = [Detection(t, "a", "T", "A") for t in (120, 150)]
     gaps = find_gaps(dets, duration=200, min_gap=60)
     assert (0.0, 120.0) in gaps   # silence/unidentified before the first hit
+
+
+def test_gap_probe_offsets_dense_enough_for_8min_gap():
+    # The 8-min Funk gap (3:00-11:00) must sample near 4:20 (260s) where a track hid.
+    offs = gap_probe_offsets(180, 660, every=45)
+    assert 9 <= len(offs) <= 13
+    assert any(abs(o - 260) <= 25 for o in offs)
+
+
+def test_gap_probe_offsets_capped_and_minimum():
+    assert len(gap_probe_offsets(0, 3600, every=45, cap=20)) == 20  # long gap is bounded
+    assert len(gap_probe_offsets(0, 60, every=45)) == 2             # short gap still gets 2
