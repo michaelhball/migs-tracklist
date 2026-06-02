@@ -28,6 +28,7 @@ def to_dict(songs: list[Song], duration: float, source: str) -> dict:
                 "detections": s.count,
                 "confidence": s.confidence,
                 "pitched": s.pitched,
+                "source": s.source,
                 "url": next((d.url for d in s.detections if d.url), None),
             }
             for s in songs
@@ -42,14 +43,20 @@ def console(songs: list[Song], duration: float) -> str:
         "",
     ]
     for i, s in enumerate(songs, 1):
+        extra = ""
+        if s.pitched:
+            extra += ", varispeed"
+        if s.via_audd:
+            extra += ", via AudD"
         lines.append(
-            f"{i:>2}. [{_fmt(s.first_s)}] {s.label()}"
-            f"   ({s.count}x, {s.confidence}{', varispeed' if s.pitched else ''})"
+            f"{i:>2}. [{_fmt(s.first_s)}] {s.label()}   ({s.count}x, {s.confidence}{extra})"
         )
     lines.append("")
     lines.append("  confidence = how many windows matched (high>=3, med=2, low=1)")
     if any(s.pitched for s in songs):
         lines.append("  varispeed  = only matched after speed correction")
+    if any(s.via_audd for s in songs):
+        lines.append("  via AudD   = found by the AudD fallback in a Shazam gap")
     return "\n".join(lines)
 
 
@@ -64,7 +71,12 @@ def markdown(songs: list[Song], duration: float, source: str) -> str:
         "|---|------|----------------|------|------------|",
     ]
     for i, s in enumerate(songs, 1):
-        note = " _(varispeed)_" if s.pitched else ""
+        notes = []
+        if s.pitched:
+            notes.append("_(varispeed)_")
+        if s.via_audd:
+            notes.append("_(via AudD)_")
+        note = (" " + " ".join(notes)) if notes else ""
         link = next((d.url for d in s.detections if d.url), None)
         label = f"[{s.label()}]({link})" if link else s.label()
         out.append(
