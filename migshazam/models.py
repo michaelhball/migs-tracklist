@@ -16,7 +16,8 @@ class Detection:
     speed_factor: float = 1.0          # which varispeed variant produced the hit
     frequency_skew: float | None = None  # Shazam's reported pitch deviation
     time_skew: float | None = None        # Shazam's reported tempo deviation
-    url: str | None = None             # shazam.com link to the track
+    url: str | None = None             # link to the track
+    source: str = "shazam"             # which backend identified it: "shazam" | "audd"
 
 
 @dataclass
@@ -44,6 +45,18 @@ class Song:
     def pitched(self) -> bool:
         """True if it only matched on a varispeed-corrected window."""
         return all(abs(d.speed_factor - 1.0) > 1e-6 for d in self.detections)
+
+    @property
+    def via_audd(self) -> bool:
+        """True if any detection came from the AudD fallback."""
+        return any(d.source == "audd" for d in self.detections)
+
+    @property
+    def source(self) -> str:
+        srcs = {d.source for d in self.detections}
+        if srcs == {"audd"}:
+            return "audd"
+        return "mixed" if "audd" in srcs else "shazam"
 
     @property
     def confidence(self) -> str:
