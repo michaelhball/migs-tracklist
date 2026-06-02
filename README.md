@@ -6,41 +6,40 @@ with Shazam (via [ShazamIO](https://github.com/shazamio/ShazamIO)), and returns 
 distinct set of songs it could recognize — with rough timestamps and a confidence
 count per track.
 
-The goal is **coverage** — identify as many songs as possible — not frame-accurate
-boundaries. DJ transitions are blends, so timestamps are approximate (window
-granularity); the value is the list of songs and roughly where each one is "in the
-clear."
+It optimizes for **coverage** (identifying as many songs as possible) rather than
+precise boundaries: DJ transitions are blends, so timestamps are approximate
+(window-granularity).
 
 ## What it does / doesn't do
 
-- ✅ Free: uses ShazamIO, no API keys.
-- ✅ YouTube + SoundCloud ingest via `yt-dlp`, plus any local file.
-- ✅ Rescues pitched tracks with an optional **varispeed grid-search** (`--grid`):
-  DJ pitch faders move tempo + pitch together, which breaks raw Shazam matching, so
-  on a miss we re-query the window at a few speed factors.
-- ⚠️ **Catalog ceiling**: unreleased dubs / white-labels / bootleg edits are in no
-  Shazam database and will never be identified — they show up as gaps, not songs.
-- ⚠️ ShazamIO talks to Shazam's *unofficial* endpoint (IP rate-limited, gray-area,
-  can break). We self-throttle (~12 req/min) and back off on errors.
+- Free, no API key required (Shazam via ShazamIO).
+- YouTube + SoundCloud ingest via `yt-dlp`, plus any local file.
+- Optional **varispeed grid-search** (`--grid`): re-query missed windows at several
+  speed factors to rescue pitch-shifted tracks.
+- Optional **AudD fallback** (`--audd`) to identify tracks missing from Shazam's
+  catalog (different catalog; needs a token).
+- **Catalog ceiling**: tracks in neither catalog appear as gaps, not songs —
+  pitch/tempo correction cannot recover them.
+- ShazamIO uses Shazam's *unofficial* endpoint (IP rate-limited, can break); the
+  client self-throttles (~12 req/min) and backs off on errors.
 
 ## Setup
 
-ShazamIO's native core (`shazamio-core`) only ships macOS-arm64 wheels for
-**Python 3.10–3.12**, so create the venv with 3.12:
-
-Dependencies are managed with [uv](https://docs.astral.sh/uv/). `uv sync` reads
-`requires-python` (pinned `<3.13`) and creates the `.venv` for you:
+Dependencies are managed with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-cd ~/projects/migshazam
 uv sync
 ```
 
-You also need:
+This creates `.venv` and installs everything. The project pins Python `<3.13`
+because `shazamio-core` only ships macOS-arm64 wheels for Python 3.10–3.12; uv
+selects a matching interpreter automatically.
 
-- **ffmpeg** (audio slicing) — already on this machine (`ffmpeg 8.0.1`).
-- A **JavaScript runtime** for YouTube downloads. `brew install deno` is the
-  simplest. (SoundCloud and local files don't need it.)
+Also required:
+
+- **ffmpeg** — audio decoding, slicing, and resampling.
+- A **JavaScript runtime** for YouTube downloads (`brew install deno`); not needed
+  for SoundCloud or local files.
 
 ## Usage
 
@@ -60,8 +59,8 @@ uv run migshazam "<url>" --end 10:00
 uv run migshazam "<url>" --ytdlp-arg=--cookies-from-browser=chrome
 ```
 
-Outputs `<name>.tracklist.json` and `<name>.tracklist.md`, and prints the list to
-the console. Progress (one line per window) goes to stderr.
+Outputs `<name>.tracklist.json` and `<name>.tracklist.md` (override the prefix with
+`--out`), and prints the list to the console. Progress goes to stderr.
 
 ### Key options
 
@@ -115,18 +114,18 @@ continuing with Shazam results only.
 
 ```
 ingest.py     yt-dlp download (URL -> local file)
-audioio.py    ffmpeg: probe duration, extract mono windows (+ varispeed)
+audioio.py    ffmpeg: probe duration, extract mono windows (+ varispeed), RMS
 recognize.py  ShazamIO wrapper: throttle + retry/backoff + parse
-scan.py       slide window across the mix, grid-search on misses; find_gaps()
-cluster.py    group detections into distinct songs (by Shazam track key)
+scan.py       slide windows across the mix; grid-search on misses; find_gaps()
+cluster.py    group detections into distinct songs; merge same-title entries
 audd.py       AudD fallback backend for unidentified gaps
+models.py     Detection / Song data structures
 output.py     console / JSON / Markdown
-cli.py        glue
+cli.py        argument parsing and orchestration
 ```
 
-Shazam (free, primary) and AudD (paid catalog, gap fallback) sit behind the same
-detection model, so additional backends (e.g. ACRCloud) could be slotted in the
-same way if catalog coverage demands it.
+Shazam (primary) and AudD (gap fallback) sit behind the same detection model, so
+another backend (e.g. ACRCloud) could be added the same way.
 
 ## Development
 
