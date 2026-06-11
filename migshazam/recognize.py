@@ -86,4 +86,22 @@ class Recognizer:
             frequency_skew=m.get("frequencyskew"),
             time_skew=m.get("timeskew"),
             url=track.get("url"),
+            offset_s=m.get("offset"),
+            preview_url=_preview_url(track.get("hub") or {}),
         )
+
+
+def _preview_url(hub: dict) -> str | None:
+    """Pull the Apple audio-preview URI out of a track's `hub` block.
+
+    The hub lists provider actions; the preview is the action whose uri points
+    at an audio asset (an .m4a on Apple's CDN) rather than a web page.
+    """
+    actions = list(hub.get("actions") or [])
+    for option in hub.get("options") or []:
+        actions.extend(option.get("actions") or [])
+    for a in actions:
+        uri = a.get("uri") or ""
+        if ".m4a" in uri or "audio-ssl" in uri:
+            return uri
+    return None

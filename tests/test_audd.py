@@ -46,3 +46,28 @@ def test_load_token_missing(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     assert load_token() is None
+
+
+def test_parse_captures_timecode_and_apple_preview():
+    resp = {"status": "success",
+            "result": {"artist": "A", "title": "T", "song_link": "https://lis.tn/x",
+                       "timecode": "01:23",
+                       "apple_music": {"previews": [{"url": "https://p/a.m4a"}]},
+                       "deezer": {"preview": "https://p/d.mp3"}}}
+    d = _parse_response(resp, 0.0)
+    assert d.offset_s == 83.0
+    assert d.preview_url == "https://p/a.m4a"  # apple preferred over deezer
+
+
+def test_parse_preview_falls_back_to_deezer():
+    resp = {"status": "success",
+            "result": {"artist": "A", "title": "T",
+                       "deezer": {"preview": "https://p/d.mp3"}}}
+    assert _parse_response(resp, 0.0).preview_url == "https://p/d.mp3"
+
+
+def test_parse_timecode_junk_is_ignored():
+    resp = {"status": "success",
+            "result": {"artist": "A", "title": "T", "timecode": "n/a"}}
+    d = _parse_response(resp, 0.0)
+    assert d.offset_s is None and d.preview_url is None

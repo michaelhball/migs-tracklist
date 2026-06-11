@@ -18,6 +18,12 @@ precise boundaries: DJ transitions are blends, so timestamps are approximate
   speed factors to rescue pitch-shifted tracks.
 - Optional **AudD fallback** (`--audd`) to identify tracks missing from Shazam's
   catalog (different catalog; needs a token).
+- Optional **acoustic verification** (`--verify`): fetches a ~30s preview of each
+  claimed track (Apple/Deezer) and aligns it against the mix audio to confirm it
+  actually plays there; wrong identifications are flagged `rejected`.
+- A free **offset-consistency check** on every run: the positions *within the
+  matched track* that Shazam reports should advance like a song playing through —
+  songs that fail are flagged in the output as likely misidentifications.
 - **Catalog ceiling**: tracks in neither catalog appear as gaps, not songs —
   pitch/tempo correction cannot recover them.
 - ShazamIO uses Shazam's *unofficial* endpoint (IP rate-limited, can break); the
@@ -77,6 +83,8 @@ Outputs `<name>.tracklist.json` and `<name>.tracklist.md` (override the prefix w
 | `--audd` | off | fall back to AudD on unidentified gaps (needs `AUDD_API_TOKEN`) |
 | `--audd-gap-min` | `60` | only probe AudD on gaps at least this many seconds long |
 | `--audd-clip-every` | `45` | AudD probe spacing within a gap (seconds); lower catches more, costs more |
+| `--verify` | off | acoustically verify each song against the mix (needs the `verify` extra) |
+| `--verify-threshold` | `0.055` | DTW match-cost cutoff for `--verify`; lower is stricter |
 
 A 60-min mix at `--hop 30` is ~120 windows ≈ ~10 min at the default rate (the rate
 limit, not the audio, is the bottleneck). `--grid` multiplies requests on misses.
@@ -112,6 +120,39 @@ WARNING: AudD fallback unavailable (...the provided api_token is incorrect...);
 continuing with Shazam results only.
 ```
 
+### Verifying the tracklist acoustically (optional)
+
+Shazam/AudD sometimes return plausible-but-wrong matches (wrong version, false
+positives on transitions, gap-fill guesses). `--verify` cross-checks every
+identified song against the mix audio itself:
+
+1. fetch a ~30s preview of the *claimed* track — from the preview URL Shazam/AudD
+   already returned, falling back to the iTunes and Deezer search APIs;
+2. align it against the mix around the claimed position with subsequence DTW over
+   chroma features — robust to varispeed (±10%+), EQ filtering, crossfade overlap,
+   and ±1-semitone key shifts;
+3. report a verdict per song: `verified` (preview aligned), `rejected` (it
+   didn't — likely wrong), or `unverifiable` (no usable preview could be fetched
+   or decoded, common for white labels/bootlegs — distinct from wrong; the JSON's
+   `verify_note` says why).
+
+It needs `librosa`, installed via the `verify` extra:
+
+```bash
+uv sync --extra verify
+uv run migshazam "<url>" --grid --verify
+```
+
+Verdicts appear in the console, as a `Verified` column in the Markdown, and as
+`verification`/`verify_note` (the raw match cost) in the JSON. Rejected songs are
+flagged, not removed — the call is yours.
+
+Independently of `--verify`, every run now records where *within the matched
+track* each window hit landed (Shazam's match offset / AudD's timecode). For a
+track genuinely playing through the mix these advance linearly; songs that fail
+this are tagged `offsets!` in the console, `_(offset mismatch)_` in the Markdown,
+and `"offsets_consistent": false` in the JSON — at zero extra cost or requests.
+
 ## How it's structured
 
 ```
@@ -121,7 +162,8 @@ recognize.py  ShazamIO wrapper: throttle + retry/backoff + parse
 scan.py       slide windows across the mix; grid-search on misses; find_gaps()
 cluster.py    group detections into distinct songs; merge same-title entries
 audd.py       AudD fallback backend for unidentified gaps
-models.py     Detection / Song data structures
+verify.py     acoustic verification: preview fetch + chroma-DTW alignment
+models.py     Detection / Song data structures (incl. offset-consistency check)
 output.py     console / JSON / Markdown
 cli.py        argument parsing and orchestration
 ```
@@ -138,5 +180,6 @@ uv run ruff check .  # lint
 
 Dev dependencies (`pytest`, `ruff`) live in the `dev` dependency group and are
 installed by `uv sync`. The tests cover the pure logic — clustering, grid
-arbitration, response parsing, the energy gate, time parsing — and skip anything
-that needs the Shazam network or (for the windowing test) ffmpeg if it's absent.
+arbitration, response parsing, the energy gate, time parsing, offset consistency,
+and the DTW verifier (on synthetic audio) — and skip anything that needs the
+Shazam network, ffmpeg, or (for the verifier) librosa if it's absent.

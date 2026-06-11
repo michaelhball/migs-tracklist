@@ -68,7 +68,33 @@ def _parse_response(resp: dict, start_s: float) -> Detection | None:
         artist=artist,
         url=res.get("song_link"),
         source="audd",
+        offset_s=_parse_timecode(res.get("timecode")),
+        preview_url=_preview(res),
     )
+
+
+def _parse_timecode(tc: str | None) -> float | None:
+    """AudD's `timecode` ("MM:SS" or "HH:MM:SS") = clip position in the matched song."""
+    if not tc:
+        return None
+    try:
+        total = 0.0
+        for part in tc.split(":"):
+            total = total * 60 + float(part)
+        return total
+    except ValueError:
+        return None
+
+
+def _preview(res: dict) -> str | None:
+    """Audio preview URL from the apple_music/deezer blocks (present because we
+    ask for them via `return=`)."""
+    am = res.get("apple_music") or {}
+    for p in am.get("previews") or []:
+        if p.get("url"):
+            return p["url"]
+    deezer = res.get("deezer") or {}
+    return deezer.get("preview") or None
 
 
 class AuddRecognizer:
@@ -84,7 +110,8 @@ class AuddRecognizer:
         try:
             resp = requests.post(
                 ENDPOINT,
-                data={"api_token": self.token},
+                # apple_music/deezer add preview URLs we can verify against later.
+                data={"api_token": self.token, "return": "apple_music,deezer"},
                 files={"file": ("clip.wav", _clip(path, start_s, self.clip_s), "audio/wav")},
                 timeout=90,
             ).json()

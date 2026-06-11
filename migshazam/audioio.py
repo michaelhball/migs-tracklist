@@ -25,6 +25,28 @@ def rms_level(wav_bytes: bytes) -> float:
     return float(np.sqrt(np.mean((samples.astype(np.float32) / 32768.0) ** 2)))
 
 
+def decode_pcm(
+    path: str,
+    sr: int = 22050,
+    start_s: float | None = None,
+    dur_s: float | None = None,
+) -> np.ndarray:
+    """Decode (a slice of) an audio file to mono float32 samples at `sr`.
+
+    Used by the verifier, which needs raw samples for feature extraction;
+    going through ffmpeg keeps every container/codec we ingest decodable.
+    """
+    cmd = ["ffmpeg", "-v", "error"]
+    if start_s is not None:
+        cmd += ["-ss", f"{start_s:.3f}"]
+    cmd += ["-i", path]
+    if dur_s is not None:
+        cmd += ["-t", f"{dur_s:.3f}"]
+    cmd += ["-ac", "1", "-ar", str(sr), "-f", "f32le", "pipe:1"]
+    out = subprocess.run(cmd, capture_output=True, check=True).stdout
+    return np.frombuffer(out, dtype="<f4").copy()
+
+
 def ffprobe_duration(path: str) -> float:
     """Return the duration of an audio file in seconds."""
     out = subprocess.run(

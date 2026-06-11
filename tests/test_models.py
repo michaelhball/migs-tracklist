@@ -47,3 +47,48 @@ def test_source_and_via_audd():
 
     shz = _song(n=2)
     assert shz.via_audd is False and shz.source == "shazam"
+
+
+def _with_offsets(pairs, speeds=None):
+    s = Song(track_key="k", title="T", artist="A")
+    speeds = speeds or [1.0] * len(pairs)
+    for (t, o), sp in zip(pairs, speeds, strict=True):
+        s.detections.append(Detection(t, "k", "T", "A", offset_s=o, speed_factor=sp))
+    return s
+
+
+def test_offsets_consistent_when_advancing_like_playback():
+    assert _with_offsets([(0, 30), (30, 61), (60, 88)]).offsets_consistent is True
+
+
+def test_offsets_inconsistent_for_scattered_matches():
+    assert _with_offsets([(0, 120), (30, 15), (60, 200)]).offsets_consistent is False
+
+
+def test_offsets_unknown_without_two_offsets():
+    assert _with_offsets([(0, 30)]).offsets_consistent is None
+    assert _song(n=3).offsets_consistent is None  # detections carry no offsets
+
+
+def test_offsets_consistent_scales_with_varispeed():
+    # Matched at 1.06x speed-up ⇒ the mix plays the track slowed ⇒ catalog
+    # offsets advance by Δt/1.06, not Δt.
+    pairs = [(0, 10), (30, 10 + 30 / 1.06)]
+    assert _with_offsets(pairs, speeds=[1.06, 1.06]).offsets_consistent is True
+
+
+def test_offsets_tolerate_small_jitter_but_not_rewinds():
+    assert _with_offsets([(0, 50), (30, 75)]).offsets_consistent is True   # -5s jitter
+    assert _with_offsets([(0, 50), (30, 20)]).offsets_consistent is False  # rewind
+
+
+def test_offsets_not_compared_across_different_recordings():
+    # A merged song holding Shazam + AudD hits of different releases: offsets
+    # only pair up within one track_key, so the cross-backend "jump" is ignored.
+    s = Song(track_key="k", title="T", artist="A")
+    s.detections += [
+        Detection(0, "k", "T", "A", offset_s=30),
+        Detection(30, "k", "T", "A", offset_s=61),
+        Detection(60, "audd:a|t", "T", "A", source="audd", offset_s=200),
+    ]
+    assert s.offsets_consistent is True

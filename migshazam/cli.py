@@ -67,6 +67,13 @@ def _build_parser() -> argparse.ArgumentParser:
                         "lower catches more but costs more requests)")
     p.add_argument("--audd-token", default=None,
                    help="AudD API token (overrides env/.env)")
+    p.add_argument("--verify", action="store_true",
+                   help="acoustically verify each identified song against the mix "
+                        "(fetches ~30s previews and aligns them with chroma DTW; "
+                        "needs the `verify` extra: uv sync --extra verify)")
+    p.add_argument("--verify-threshold", type=float, default=None,
+                   help="DTW match-cost threshold for --verify; lower is stricter "
+                        "(default 0.055)")
     p.add_argument("--out", default=None,
                    help="output file prefix (default: derived from input)")
     p.add_argument("--keep-audio", action="store_true",
@@ -78,6 +85,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(args) -> int:
+    if args.verify:
+        # Fail fast on a missing librosa now, not after an hour-long scan.
+        from .verify import require_librosa
+
+        require_librosa()
+
     grid = None
     if args.grid:
         grid = [float(x) for x in args.grid_steps.split(",") if x.strip()]
@@ -105,53 +118,66 @@ async def _run(args) -> int:
 
     prefix = args.out or f"{default_prefix}.tracklist"
 
-    print(f"Scanning (window={args.window}s, hop={args.hop}s, "
-          f"rate={args.rate}/min, grid={'on' if grid else 'off'}) ...", file=sys.stderr)
-    recognizer = Recognizer(rate_per_min=args.rate)
-    detections, duration = await scan_mix(
-        audio_path, recognizer,
-        window_s=args.window, hop_s=args.hop, grid=grid,
-        start_s=args.start, end_s=args.end,
-        grid_min_rms=args.grid_min_rms,
-    )
+    try:
+        print(f"Scanning (window={args.window}s, hop={args.hop}s, "
+              f"rate={args.rate}/min, grid={'on' if grid else 'off'}) ...", file=sys.stderr)
+        recognizer = Recognizer(rate_per_min=args.rate)
+        detections, duration = await scan_mix(
+            audio_path, recognizer,
+            window_s=args.window, hop_s=args.hop, grid=grid,
+            start_s=args.start, end_s=args.end,
+            grid_min_rms=args.grid_min_rms,
+        )
 
-    # AudD fallback on unidentified gaps (needs the audio file, so before cleanup).
-    if args.audd:
-        token = load_token(args.audd_token)
-        if not token:
-            print("WARNING: --audd set but no AUDD_API_TOKEN found (env or .env); "
-                  "continuing with Shazam only.", file=sys.stderr)
-        else:
-            audd = AuddRecognizer(token)
-            scan_start = max(0.0, args.start)
-            scan_end = duration if args.end is None else min(args.end, duration)
-            gaps = [(s, e) for (s, e) in find_gaps(detections, scan_end, args.audd_gap_min)
-                    if e > scan_start]
-            print(f"AudD fallback: probing {len(gaps)} gap(s) >= {args.audd_gap_min:g}s ...",
+        # AudD fallback on unidentified gaps (needs the audio file, so before cleanup).
+        if args.audd:
+            token = load_token(args.audd_token)
+            if not token:
+                print("WARNING: --audd set but no AUDD_API_TOKEN found (env or .env); "
+                      "continuing with Shazam only.", file=sys.stderr)
+            else:
+                audd = AuddRecognizer(token)
+                scan_start = max(0.0, args.start)
+                scan_end = duration if args.end is None else min(args.end, duration)
+                gaps = [(s, e) for (s, e) in find_gaps(detections, scan_end, args.audd_gap_min)
+                        if e > scan_start]
+                print(f"AudD fallback: probing {len(gaps)} gap(s) >= {args.audd_gap_min:g}s ...",
+                      file=sys.stderr)
+                try:
+                    for gs, ge in gaps:
+                        for off in gap_probe_offsets(gs, ge, args.audd_clip_every):
+                            det = audd.recognize_clip(audio_path, off)
+                            label = f"{det.artist} – {det.title}" if det else "—"
+                            print(f"  [AudD] {_fmt(off)}  {label}", file=sys.stderr)
+                            if det:
+                                detections.append(det)
+                except AuddError as exc:
+                    # Token expired / quota exhausted / network: keep going Shazam-only.
+                    print(f"WARNING: AudD fallback unavailable ({exc}); "
+                          f"continuing with Shazam results only.", file=sys.stderr)
+                print(f"AudD used {audd.requests} request(s)", file=sys.stderr)
+
+        songs = cluster_songs(detections, min_matches=args.min_matches)
+
+        # Verification also needs the audio, so it runs before cleanup.
+        if args.verify:
+            from .verify import DEFAULT_THRESHOLD, verify_songs
+
+            print(f"Verifying {len(songs)} song(s) against the mix audio ...",
                   file=sys.stderr)
+            verify_songs(songs, audio_path, duration,
+                         threshold=(DEFAULT_THRESHOLD if args.verify_threshold is None
+                                    else args.verify_threshold),
+                         window_s=args.window)
+    finally:
+        if cleanup_audio:
             try:
-                for gs, ge in gaps:
-                    for off in gap_probe_offsets(gs, ge, args.audd_clip_every):
-                        det = audd.recognize_clip(audio_path, off)
-                        label = f"{det.artist} – {det.title}" if det else "—"
-                        print(f"  [AudD] {_fmt(off)}  {label}", file=sys.stderr)
-                        if det:
-                            detections.append(det)
-            except AuddError as exc:
-                # Token expired / quota exhausted / network: keep going Shazam-only.
-                print(f"WARNING: AudD fallback unavailable ({exc}); "
-                      f"continuing with Shazam results only.", file=sys.stderr)
-            print(f"AudD used {audd.requests} request(s)", file=sys.stderr)
+                os.remove(audio_path)
+                if tmpdir:
+                    os.rmdir(tmpdir)
+            except OSError:
+                pass
 
-    if cleanup_audio:
-        try:
-            os.remove(audio_path)
-            if tmpdir:
-                os.rmdir(tmpdir)
-        except OSError:
-            pass
-
-    songs = cluster_songs(detections, min_matches=args.min_matches)
     print(console(songs, duration))
     written = write_outputs(songs, duration, source, prefix)
     print(f"\nWrote: {', '.join(written)}", file=sys.stderr)
