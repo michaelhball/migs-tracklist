@@ -82,6 +82,17 @@ def test_offsets_tolerate_small_jitter_but_not_rewinds():
     assert _with_offsets([(0, 50), (30, 20)]).offsets_consistent is False  # rewind
 
 
+def test_offsets_consistent_allows_forward_jumps_and_uneven_rate():
+    # Regression: real groovy/looped tracks whose offsets jump FORWARD (Shazam
+    # matching a similar bar elsewhere in the track) or advance at an uneven rate
+    # must NOT be flagged — only backward rewinds are. These are the exact
+    # offsets of DJ Darryn's "Act I" and "Millie Jackson", which the old
+    # exact-rate check wrongly rejected despite both verifying acoustically.
+    assert _with_offsets([(0, 45), (30, 39), (60, 110)]).offsets_consistent is True
+    assert _with_offsets(
+        [(0, 52), (30, 71), (60, 105), (90, 111)]).offsets_consistent is True
+
+
 def test_offsets_not_compared_across_different_recordings():
     # A merged song holding Shazam + AudD hits of different releases: offsets
     # only pair up within one track_key, so the cross-backend "jump" is ignored.

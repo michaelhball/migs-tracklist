@@ -22,9 +22,9 @@ class Detection:
     preview_url: str | None = None     # ~30s audio preview (Apple/Deezer), if the backend gave one
 
 
-# A real track plays through the mix, so catalog offsets of consecutive hits
-# should advance at roughly mix speed. Allow generous slack: Shazam's offset is
-# coarse, DJs nudge tempo, and loops/doubles rewind briefly.
+# A real track plays forward through the mix; only a backward rewind in its
+# catalog offset marks a scattered/false match. These bound the rewind forgiven
+# as jitter — Shazam's offset is coarse and DJs briefly loop/re-cue.
 _OFFSET_TOL_S = 8.0
 _OFFSET_TOL_FRAC = 0.25
 
@@ -79,38 +79,37 @@ class Song:
 
     @property
     def offsets_consistent(self) -> bool | None:
-        """Do the catalog-track offsets of consecutive hits advance like a
+        """Do the catalog-track offsets of consecutive hits move forward, like a
         track really playing through the mix?
 
-        For windows Δt apart in the mix, the matched track's offset should
-        advance by ~Δt (scaled by varispeed). Independent false matches land at
-        arbitrary offsets and fail this. None = fewer than two hits carried an
-        offset, so nothing can be said.
+        A real track only advances through its own timeline, so we flag a
+        *rewind* — a hit landing at an earlier catalog position as the mix moves
+        on, beyond a jitter tolerance — which is what scattered/false matches do.
+        We deliberately do NOT check the advance *rate*: DJ loops and re-cues,
+        self-similar grooves (Shazam matches a similar bar elsewhere in the same
+        track) and the grid's quantized varispeed make the rate jump around even
+        for correct IDs, so an exact-rate test over-flags them. Forward jumps,
+        however large, are fine.
 
-        Pairs are only formed between hits on the same catalog recording
-        (track_key): a merged song can hold Shazam and AudD hits of different
-        releases, whose offsets are not mutually comparable.
+        Pairs only form within one catalog recording (track_key): a merged song
+        can hold Shazam and AudD hits of different releases whose offsets are not
+        comparable. None = fewer than two hits on a recording carried an offset.
         """
-        groups: dict[str, list[tuple[float, float, float]]] = {}
+        groups: dict[str, list[tuple[float, float]]] = {}
         for d in self.detections:
             if d.offset_s is not None:
-                groups.setdefault(d.track_key, []).append(
-                    (d.time_s, d.offset_s, d.speed_factor))
+                groups.setdefault(d.track_key, []).append((d.time_s, d.offset_s))
         pairs = []
         for pts in groups.values():
-            pts.sort(key=lambda p: p[0])
+            pts.sort()
             pairs += [(a, b) for a, b in zip(pts, pts[1:], strict=False) if b[0] > a[0]]
         if not pairs:
             return None
-        ok = 0
-        for (t1, o1, s1), (t2, o2, s2) in pairs:
-            dt = t2 - t1
-            # Window varispeeded by s to match the catalog ⇒ the mix plays the
-            # catalog track at rate 1/s ⇒ expected offset advance is Δt/s.
-            expected = dt / ((s1 + s2) / 2)
-            if abs((o2 - o1) - expected) <= max(_OFFSET_TOL_S, _OFFSET_TOL_FRAC * dt):
-                ok += 1
-        return ok * 2 >= len(pairs)
+        for (t1, o1), (t2, o2) in pairs:
+            rewind = o1 - o2  # positive ⇒ the catalog position moved backward
+            if rewind > max(_OFFSET_TOL_S, _OFFSET_TOL_FRAC * (t2 - t1)):
+                return False
+        return True
 
     def label(self) -> str:
         artist = self.artist or "?"
